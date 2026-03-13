@@ -1,0 +1,485 @@
+---
+title: "Data Visulisation"
+output:
+  pdf_document: default
+  html_document: default
+date: "2025-01-19"
+---
+
+```{r}
+#Setting up libraries
+library(ggplot2)
+library(tidyverse)
+
+```
+
+```{r}
+rm(list = ls()) 
+current_dir <- getwd()
+print(current_dir)
+setwd("C:/Users/daokh/OneDrive/0.UzK/Data Management & Visualisation")
+cars <- read.csv("cars.csv")
+head(cars)
+```
+
+**Data cleaning**
+
+Type of vehicles are grouped into 8 different types based on their functions reflected by names , and the size or further description of each vehicle is then categorized in the sub_class.\
+
+```{r}
+##Clean the "Class" column, divide into class_group (vehicle type) and sub_class
+# Clean format
+cars$class <- gsub("\\s*-\\s*", " - ", cars$class)  
+cars$class <- trimws(cars$class)
+
+# Create a new column 'class_group' for broader categories
+cars$class_group <- ifelse(grepl("Cars", cars$class), "Cars",
+                   ifelse(grepl("Wagons", cars$class), "Wagons",
+                   ifelse(grepl("Utility", cars$class), "SUVs",
+                   ifelse(grepl("Pickup", cars$class), "Pickup Trucks",
+                   ifelse(grepl("Minivan", cars$class), "Minivans",
+                   ifelse(grepl("Vans", cars$class), "Vans",
+                   ifelse(grepl("Special Purpose", cars$class), "Special Purpose Vehicles", "Two Seaters")))))))
+
+# Extract 'sub_class' - the descriptor (first part of the 'class' column)
+cars$sub_class <- gsub("^(.*?)\\s*(Cars|Wagons|Utility|Pickup|Minivan|Vans|Special).*", "\\1", cars$class)
+cars$sub_class <- trimws(cars$sub_class)  
+```
+
+Transmission is categorised into two major groups: Manual and Automatic, which are known to partly deterministic of the vehicle's energy usage. The transmission_subtype refers to the specific gears ratio/ gear structure.\
+
+```{r}
+
+cars <- cars %>%
+  mutate(
+    # Clean 'transmission'
+    transmission = trimws(transmission),
+
+    # Define 'transmission_type'
+    transmission_type = case_when(
+      grepl("Manual", transmission, ignore.case = TRUE) ~ "Manual",
+      grepl("Auto|Automatic", transmission, ignore.case = TRUE) ~ "Automatic",
+      TRUE ~ NA_character_
+    ),
+
+    # Define 'transmission_subtype'
+    transmission_subtype = case_when(
+      grepl("6spd|6-spd", transmission, ignore.case = TRUE) ~ "6-spd",
+      grepl("5spd|5-spd|5 spd", transmission, ignore.case = TRUE) ~ "5-spd",
+      grepl("4spd|4-spd", transmission, ignore.case = TRUE) ~ "4-spd",
+      grepl("3spd|3-spd", transmission, ignore.case = TRUE) ~ "3-spd",
+      grepl("7spd|7-spd", transmission, ignore.case = TRUE) ~ "7-spd",
+      grepl("8spd|8-spd", transmission, ignore.case = TRUE) ~ "8-spd",
+      grepl("9spd|9-spd", transmission, ignore.case = TRUE) ~ "9-spd",
+      grepl("AM-S6|AM6|S6", transmission, ignore.case = TRUE) ~ "S6",
+      grepl("AM-S5|AM5|S5", transmission, ignore.case = TRUE) ~ "S5",
+      grepl("AM-S4|AM4|S4", transmission, ignore.case = TRUE) ~ "S4",
+      grepl("AM-S7|AM7|S7", transmission, ignore.case = TRUE) ~ "S7",
+      grepl("AM-S8|AM8|S8", transmission, ignore.case = TRUE) ~ "S8",
+      grepl("AV-S6", transmission, ignore.case = TRUE) ~ "AV-S6",
+      grepl("AV-S7", transmission, ignore.case = TRUE) ~ "AV-S7",
+      grepl("AV-S8", transmission, ignore.case = TRUE) ~ "AV-S8",
+      grepl("A1", transmission, ignore.case = TRUE) ~ "A1",
+      grepl("Variable Gear Ratios", transmission, ignore.case = TRUE) ~ "Variable Gear Ratios",
+      TRUE ~ "Other"
+    )
+  ) %>%
+  # Remove rows where 'transmission' is missing
+  filter(!is.na(transmission))
+ 
+```
+
+Vehicles are also divided into two groups based on their wheel drive type: 2-Wheel or 4-Wheel.
+
+```{r}
+## Add drive_group
+cars$drive_group <- ifelse(grepl("Front-Wheel|Rear-Wheel|2-Wheel", cars$drive, ignore.case = TRUE), "2-Wheel Drive",
+                    ifelse(grepl("All-Wheel|4-Wheel", cars$drive, ignore.case = TRUE), "4-Wheel Drive", 
+                    "Other"))
+```
+
+The fuels are re-categorised for ease of analysis. For vehicles that can run on two fuels simultaneously, I call it "Hybrid". For vehicles that can use either fuel, I call it "Multiple Fuels". Vehicles running on fuels other than gas, diesel, electric, CNG, E85 Ethanol are grouped into "Other".\
+
+```{r}
+## Clean fuel group
+cars$fuel_clean <- ifelse(grepl("and", cars$fuel, ignore.case = TRUE), "Hybrid",
+                   ifelse(grepl("or", cars$fuel, ignore.case = TRUE), "Multiple Fuels",
+                   ifelse(grepl("Premium", cars$fuel, ignore.case = TRUE), "Premium Gas",
+                   ifelse(grepl("Midgrade", cars$fuel, ignore.case = TRUE), "Midgrade Gas",
+                   ifelse(grepl("Regular|Gasoline", cars$fuel, ignore.case = TRUE), "Regular Gas",
+                   ifelse(grepl("Diesel", cars$fuel, ignore.case = TRUE), "Diesel",
+                   ifelse(grepl("Electricity", cars$fuel, ignore.case = TRUE), "Electric",
+                   ifelse(grepl("CNG", cars$fuel, ignore.case = TRUE), "CNG",
+                   ifelse(grepl("E85", cars$fuel, ignore.case = TRUE), "E85 Ethanol", "Other")))))))))
+```
+
+**Exploratory Data Analysis**
+
+```{r}
+## Dataset Description
+str(cars)
+```
+
+The dataset contains 25461 observations of car models, from 1984 to 2015. For each observation, there is information on its manufacturer (make), its model, its year of release, its class and sub_class group, its transmission and transmission_subtype, its drive_group and drive type, its number of cylinders, its engine size measured in liters, its fuel type, its highway fuel efficiency and its city fuel efficiency measured in miles per gallon.
+
+```{r}
+##Fuel efficiency trend 1984-2015
+mpg_trends <- cars %>%
+  group_by(year) %>%
+  summarize(
+    avg_mpg_city = mean(mpg_city, na.rm = TRUE),
+    avg_mpg_hwy = mean(mpg_hwy, na.rm = TRUE)
+  )
+
+ggplot(mpg_trends, aes(x = year)) +
+  geom_line(aes(y = avg_mpg_city, color = "City MPG")) +
+  geom_line(aes(y = avg_mpg_hwy, color = "Highway MPG")) +
+  geom_vline(xintercept = 2008, linetype = "dashed", color = "grey", size = 0.5
+             ) +
+  labs(
+    title = "Fuel Efficiency Trends (1984–2015)",
+    x = "Year",
+    y = "Miles Per Gallon (MPG)",
+    color = "Fuel Efficiency"
+  ) +
+  scale_color_viridis_d(
+    option = "viridis", 
+    name = "Fuel Efficiency", 
+    labels = c("City MPG", "Highway MPG")) +
+  theme_minimal()
+
+```
+
+Fuel efficiency from 1984-2015 in city and in highway shared a similar trend, and in city, vehicles took, on average, around 5 miles per gallon less than in highway. Before 2008, the miles per gallon was relatively stagnant for 2 decades. On highway, it was around 22-23 mpg, while in city, it was around 17-18 mpg. The significant increase in fuel efficiency happened in around 2008, and just within nearly the next decade, highway MPG reached an average of nearly 29 mpg, and city MPG rose to 21 mpg by 2015.
+
+```{r}
+## Density plot of cars by fuel type over the years
+ggplot(cars, aes(x = year, fill = fuel_clean)) +
+  geom_density(alpha = 0.6, color = "grey") + # Removes black borders by setting color = NA
+  labs(
+    title = "Density of Cars by Fuel Type Over the Years",
+    x = "Year",
+    y = "Density",
+    fill = "Fuel Type"
+  ) +
+  scale_fill_viridis_d(option = "viridis") +
+  theme_minimal()
+
+##Absolute number of cars by fuel type over the years 
+cars_by_fuel <- cars %>%
+  group_by(fuel_clean, year) %>%
+  summarize(count = n(), .groups = "drop")
+
+ggplot(cars_by_fuel, aes(x = year, y = count, fill = fuel_clean)) +
+  geom_bar(stat = "identity", position = "stack") +  
+  scale_fill_viridis_d(option = "viridis", name = "Fuel Type") +
+  labs(
+    title = "Absolute Number of Cars by Fuel Type Over the Years",
+    x = "Year",
+    y = "Number of Cars",
+    fill = "Fuel Type"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1)  
+  )
+
+## Pivot table for detailed statistics
+# Group years into 5-year intervals
+cars <- cars %>%
+  mutate(year_group = floor(year / 5) * 5)  # Create a new column for 5-year groups
+
+# Create a pivot table
+cars_by_fuel <- cars %>%
+  group_by(fuel_clean, year_group) %>%
+  summarize(count = n(), .groups = "drop") %>%
+  pivot_wider(
+    names_from = year_group,
+    values_from = count,
+    values_fill = 0
+  ) %>%
+  select(fuel_clean, sort(names(.)[-1]))
+print(cars_by_fuel)
+```
+
+The fuel efficiency trend shares some notable correlation with the fuel usage trend. The density plot shows that the milestone of around 2010 where there is a significant increase in fuel efficiency matches timeline of the rise in Mid-grade Gas, Multiple Fuels, Electric and Hybrid models. As the number speaks, Mid-grade Gas and Hybrid models appeared only after 2005, and a new high record for the number of Electric and Multiple Fuels is seen in the five year period 2005-2010. Meanwhile, despite being consistently the most popular fuel, Premium Gas saw a declining trend, leaving room for the expansion of the second most popular fuel, Premium Gas. Also, it can be observed that the absolute number of vehicles recorded in each year are not comparable. Thus, in some further analysis involved timeline, the relative proportion of vehicles shall be used.
+
+```{r}
+## Fuel efficiency
+# Summarize average Highway MPG and City MPG by fuel type
+fuel_efficiency <- cars %>%
+  group_by(fuel_clean) %>%
+  summarize(
+    avg_mpg_hwy = mean(mpg_hwy, na.rm = TRUE),   
+    avg_mpg_city = mean(mpg_city, na.rm = TRUE) 
+  ) %>%
+  arrange(desc(avg_mpg_hwy)) 
+
+# Reshape data into long format for plotting
+fuel_efficiency_long <- fuel_efficiency %>%
+  tidyr::pivot_longer(cols = c(avg_mpg_hwy, avg_mpg_city),
+                      names_to = "mpg_type", values_to = "mpg_value")
+
+# Bar chart
+ggplot(fuel_efficiency_long, aes(x = reorder(fuel_clean, mpg_value), y = mpg_value, fill = mpg_type)) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.9)) +  
+  geom_text(aes(label = round(mpg_value, 1)),  
+            position = position_dodge(width = 0.9),  
+            vjust = 0.5, hjust = -0.2, size = 3) +  
+  coord_flip() +  
+  labs(
+    title = "Fuel Efficiency by Fuel Type",
+    x = "Fuel Type",
+    y = "Average Miles per Gallon (MPG)",
+    fill = "MPG Type"
+  ) +
+  scale_color_viridis_d(
+    option = "viridis", 
+    name = "Fuel Efficiency",
+                    labels = c("avg_mpg_hwy" = "Highway MPG", "avg_mpg_city" = "City MPG")) +
+  theme_minimal()
+```
+
+The energy trend appears to be supported by the efficiency by fuel type. The new two rising stars around 2010, electric and hybrid are the most efficient, and interestingly, vehicles with such fuels are the only ones able to run more miles in city than in highway per gallon. Electric vehicles are the most impressive, with city and highway mpg are approximately 4-fold some traditional fuels. These traditional fuels perform quite similarly around more than 20 mpg in highway and around 14-17 mpg in city.
+
+```{r}
+# Summarize the counts of cars by year and transmission type
+transmission_trend <- cars %>%
+  group_by(year, transmission_type) %>%
+  summarize(count = n(), .groups = "drop") %>%
+  group_by(year) %>%
+  mutate(percentage = count / sum(count) * 100)  # Calculate percentage within each year
+
+# Plot the trend for Automatic vs Manual transmission proportions
+ggplot(transmission_trend, aes(x = year, y = percentage, color = transmission_type, group = transmission_type)) +
+  geom_line(size = 1) +  
+  geom_point(size = 2) +  
+  labs(
+    title = "Trend of Automatic vs Manual Transmission Proportions Over Time",
+    x = "Year",
+    y = "Percentage of Cars",
+    color = "Transmission Type"
+  ) +
+  scale_y_continuous(labels = scales::percent_format(scale = 1)) +  
+  scale_color_viridis_d(option = "viridis", name = "Transmission Type") +  
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 12, face = "bold"),
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.position = "bottom"
+  )
+
+mpg_gap <- cars %>%
+  group_by(year, transmission_type) %>%
+  summarize(
+    avg_mpg = mean((mpg_city + mpg_hwy) / 2, na.rm = TRUE),  
+    .groups = "drop"
+  ) %>%
+  pivot_wider(
+    names_from = transmission_type,
+    values_from = avg_mpg,
+    values_fill = 0  # Fill missing values with 0
+  ) %>%
+  mutate(
+    mpg_gap = Manual - Automatic,  # Difference in MPG
+    gap_closing_rate = mpg_gap - lag(mpg_gap)  # Calculate year-over-year gap closing
+  )
+
+# Plot the MPG trends and gap
+ggplot() +
+  # Line plot for average MPG of manual and automatic transmissions
+  geom_line(data = mpg_gap, aes(x = year, y = Manual, color = "Manual"), size = 1) +
+  geom_line(data = mpg_gap, aes(x = year, y = Automatic, color = "Automatic"), size = 1) +
+  # Line plot for MPG gap
+  geom_line(data = mpg_gap, aes(x = year, y = mpg_gap, color = "MPG Gap"), linetype = "dashed", size = 1) +
+  # Add annotation for average gap closing rate
+  annotate(
+    "text",
+    x = max(mpg_gap$year, na.rm = TRUE) - 5,  
+    y = max(mpg_gap$mpg_gap, na.rm = TRUE) - 2,  
+    label = paste("Avg Gap Closing Rate:", round(mean(mpg_gap$gap_closing_rate, na.rm = TRUE), 2), "MPG/year"),
+    hjust = 0,
+    size = 4,
+    color = "black"
+  ) +
+  labs(
+    title = "MPG Trends Between Automatic and Manual Transmissions",
+    x = "Year",
+    y = "Miles Per Gallon (MPG)",
+    color = "Legend"
+  ) +
+  scale_color_viridis_d(
+    option = "viridis",
+    name = "Legend",
+    labels = c("Manual", "Automatic", "MPG Gap (Manual - Automatic)")
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 12, face = "bold", hjust = 0.5),  
+    axis.text.x = element_text(angle = 45, hjust = 1), 
+    axis.title = element_text(size = 10), 
+  )
+
+
+##Compare top 3 in each category
+top_3_by_type <- cars %>%
+  mutate(
+    avg_mpg = round((mpg_city + mpg_hwy) / 2, 2)  
+  ) %>%
+  group_by(transmission_type, transmission) %>%
+  mutate(
+    first_year = min(year, na.rm = TRUE)  
+  ) %>%
+  group_by(transmission_type, transmission) %>%  # Group by transmission
+  summarize(
+    avg_mpg = mean(avg_mpg, na.rm = TRUE),  
+    first_year = first(first_year),  
+    .groups = "drop"
+  ) %>%
+  arrange(transmission_type, desc(avg_mpg)) %>%  
+  group_by(transmission_type) %>%  
+  slice_head(n = 3) %>%  # Keep the top 3 subtypes for each transmission type
+  ungroup()
+
+# Display the table
+print(top_3_by_type)
+```
+
+Consider the transmission, starting with a quite equal proportion, more automatic vehicles were manufactured while manual vehicles were declining by years, although manual vehicles appeared to have a higher average (city and highway) miles per gallon. Positively speaking, that the gap in fuel efficiency between automatic and manual vehicles are being closed, though at a quite humble average rate of minus 0.07 mpg per year. However, if looking at the top three transmissions for each category, the automatic transmission types outdid the top three in manual transmissions. The Automatic (A1) transmission leading with an average of 88.11 miles per gallon were all running on Electricity.
+
+```{r}
+# Analyze drive data
+drive_analysis <- cars %>%
+  group_by(drive_group, drive) %>%
+  summarize(
+    avg_mpg_hwy = mean(mpg_hwy, na.rm = TRUE),  
+    avg_mpg_city = mean(mpg_city, na.rm = TRUE),  
+    avg_cylinders = mean(cylinders, na.rm = TRUE),  
+    avg_eng_size = mean(eng_size, na.rm = TRUE),  
+    count = n()  # Count of cars
+  ) %>%
+  mutate(avg_mpg = (avg_mpg_city + avg_mpg_hwy) / 2) %>%  
+  arrange(desc(avg_mpg_hwy)) 
+print(drive_analysis)
+
+# Create bubble chart
+ggplot(drive_analysis, aes(x = avg_cylinders, y = avg_eng_size, size = avg_mpg, color = drive_group)) +
+  geom_point(alpha = 0.7) +
+  scale_size(range = c(5, 15)) +  
+  labs(
+    title = "Bubble Chart: Avg MPG, Cylinders, and Engine Size",
+    x = "Average Cylinders",
+    y = "Average Engine Size",
+    size = "Average MPG",
+    color = "Drive Group"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "right",
+    plot.title = element_text(hjust = 0.5, size = 12, face = "bold")
+  )
+
+```
+
+It is noticed that the engine size and number of cylinders have a positive relationship, but these two have a negative relationship with average mpg. This could be inferred as the trade off between performance and efficiency, where vehicles with more powerful engine would consume more fuels. Part-time 4 wheel was on the top right corner and had the smallest bubble size, indicating that it is the least efficient in fuel-consumption, at an average of around 17 mpg. On the other hand, Front real drive was the biggest bubble on the bottom left corner, with highest average mpg of 23, lowest engine size and number of cylinders.
+
+```{r}
+mpg_by_class <- cars %>%
+  group_by(class_group) %>%  
+  summarize(
+    avg_engine_size = round(mean(eng_size, na.rm = TRUE), 2),  
+    avg_mpg = round(mean((mpg_city + mpg_hwy) / 2, na.rm = TRUE), 2), 
+    min_mpg = round(min((mpg_city + mpg_hwy) / 2, na.rm = TRUE), 2),  
+    max_mpg = round(max((mpg_city + mpg_hwy) / 2, na.rm = TRUE), 2),  
+    .groups = "drop"
+  ) %>%
+  arrange(desc(avg_mpg)) 
+
+# Display the summary table
+print(mpg_by_class)
+
+# Normalize engine size for color mapping
+mpg_by_class <- mpg_by_class %>%
+  mutate(
+    norm_engine_size = (avg_engine_size - min(avg_engine_size)) / 
+      (max(avg_engine_size) - min(avg_engine_size))
+  )
+
+# Plot: Dot Plot for Average MPG with Min-Max Ranges
+ggplot(mpg_by_class, aes(x = avg_mpg, y = reorder(class_group, avg_mpg))) +
+  geom_point(aes(color = norm_engine_size), size = 5, alpha = 0.8) +  
+  geom_errorbarh(aes(xmin = min_mpg, xmax = max_mpg), height = 0.3, color = "gray70") +  # Error bars for min-max range
+  scale_color_viridis_c(option = "viridis", name = "Engine Size (Normalized)") +  
+  labs(
+    title = "Fuel Efficiency by Class",
+    x = "Miles Per Gallon (MPG)",
+    y = "Class"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 12, face = "bold"),
+    axis.text = element_text(size = 10),
+    axis.title = element_text(size = 10)
+  )
+
+```
+
+Cars and Wagons achieve the highest average MPG, reflecting their smaller engine sizes (around 2.5–2.8 liters), as indicated by the darker colors on the gradient. In contrast, Vans and Pickup Trucks have the lowest average MPG, driven by their significantly larger engine sizes. Cars and Wagons have the largest variation, indicatively shows that these two types include various high-performance and fuel-efficient models.
+
+```{r}
+# Calculate average MPG and engine size by make
+mpg_by_make <- cars %>%
+  group_by(make) %>%
+  summarize(
+    avg_mpg_city = round(mean(mpg_city, na.rm = TRUE), 2),
+    avg_mpg_hwy = round(mean(mpg_hwy, na.rm = TRUE), 2),
+    avg_engine_size = round(mean(eng_size, na.rm = TRUE), 2),  # Add average engine size
+    .groups = "drop"
+  ) %>%
+  arrange(desc(avg_mpg_hwy))  # Order by highway MPG
+
+# Reorder 'make' based on avg_mpg_hwy
+mpg_by_make <- mpg_by_make %>%
+  mutate(make = reorder(make, avg_mpg_hwy))
+
+# Reshape the data to long format for plotting
+mpg_long <- mpg_by_make %>%
+  pivot_longer(
+    cols = c(avg_mpg_city, avg_mpg_hwy),
+    names_to = "mpg_type",
+    values_to = "avg_mpg"
+  )
+
+# Plot: Dot Plot for Average City MPG, Highway MPG, and Engine Size by Car Make
+ggplot(mpg_long, aes(x = avg_mpg, y = make, color = avg_engine_size)) +
+  geom_point(aes(shape = mpg_type), size = 4, alpha = 0.8) +  # Points with shapes for MPG types
+  geom_line(aes(group = make), color = "grey70", linetype = "dotted") +  # Lines connecting points
+  labs(
+    title = "Average City MPG, Highway MPG, and Engine Size by Car Make",
+    x = "Average Value (MPG)",
+    y = "Car Make",
+    color = "Engine Size (L)",
+    shape = "MPG Type"
+  ) +
+  scale_color_viridis_c(option = "viridis") +  # Use Viridis palette for engine size
+  scale_shape_manual(
+    values = c(16, 17), 
+    labels = c("City MPG", "Highway MPG")
+  ) +  # Distinct shapes for City and Highway MPG
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 12, face = "bold"),
+    axis.text = element_text(size = 10),
+    axis.title = element_text(size = 12),
+    legend.position = "top"
+  )
+  
+```
+
+Honda, Volkswagen and Huyndai were the most fuel-efficient vehicle manufacturer. It was quite consistent with the engine size, since these manufacturers have the smallest engine size. Pontiac is noticeable, as while its city MPG is lower than that of its direct followers, Subaru and Madza, its highway mpg is higher, and its engine size is larger. Vehicles such as GMC, Dodge, Jeep traded off their large engine sizes for low average mpg.
+
+**Conclusion & Suggestion**
+
+Overall, the dataset reveals a trade-off between vehicle performance, represented by engine size and the number of cylinders, and fuel efficiency, measured by miles per gallon. Fuel efficiency has notably improved over time, with a significant surge during the 2010s, driven by the introduction of new fuels and vehicle models, such as electric and hybrid vehicles. While manual vehicles initially demonstrated better efficiency compared to automatic ones, advancements in automatic transmission technology have not only closed the gap but have also enabled automatic vehicles to surpass manual models in efficiency.
+
+For future energy-saving vehicles, manufacturers are encouraged to prioritize innovations in fuels, focusing on hybrids and electric vehicles. Additionally, achieving an optimal balance between performance and efficiency is crucial. By leveraging advanced technologies, smaller, more efficient engines paired with flexible gear options and modern transmission systems can deliver high performance without compromising fuel efficiency.
