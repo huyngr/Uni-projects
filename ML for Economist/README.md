@@ -1,0 +1,1 @@
+This project is a Text Classification task using Python. Complaints are grouped by their content using different machine learning methods, and the best-performing method (logistic regression) is selected.
